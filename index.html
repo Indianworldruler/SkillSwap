@@ -167,9 +167,13 @@
 
   if (currentUser.chats && currentUser.chats.length > 0) {
     for (const chat of currentUser.chats) {
-      const partnerDoc = await db.collection("users").doc(chat.partnerId).get();
-      const partnerName = partnerDoc.exists ? partnerDoc.data().name : "Unknown";
+      // Only proceed if chatKey and partnerId exist
+      if (!chat.chatKey || !chat.partnerId) continue;
 
+      const partnerDoc = await db.collection("users").doc(chat.partnerId).get();
+      if (!partnerDoc.exists) continue; // skip if partner does not exist
+
+      const partnerName = partnerDoc.data().name || "Unknown";
       const btn = document.createElement("button");
       btn.innerText = `Chat with ${partnerName}`;
       btn.onclick = () => window.location.href = `chat.html?chatKey=${chat.chatKey}`;
