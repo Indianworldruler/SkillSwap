@@ -79,12 +79,11 @@
   }
 
   // Load other users
-  async function loadOtherUsers() {
-    const usersSnapshot = await db.collection("users").get();
-    const container = document.getElementById("otherUsers");
+  function loadOtherUsers() {
+  const container = document.getElementById("otherUsers");
+  db.collection("users").onSnapshot(snapshot => {
     container.innerHTML = "";
-
-    usersSnapshot.forEach(doc => {
+    snapshot.forEach(doc => {
       if (doc.id === currentUser.id) return; // skip self
       const data = doc.data();
       const card = document.createElement("div");
@@ -93,11 +92,13 @@
         <h3>${data.name}</h3>
         <p><strong>Skills:</strong> ${(data.skills || []).join(", ")}</p>
         <p><strong>Want to Learn:</strong> ${(data.wantToLearn || []).join(", ")}</p>
-        <button onclick="sendRequest('${doc.id}', '${currentUser.id}')">Send Request</button>
+        <button onclick="sendRequest('${doc.id}', '${data.name}')">Send Request</button>
       `;
       container.appendChild(card);
     });
-  }
+  });
+}
+
 
   // Send connection request
   async function sendRequest(targetId, senderId) {
