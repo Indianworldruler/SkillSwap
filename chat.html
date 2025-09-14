@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Chat</title>
+  <style>
+    body {font-family: Arial, sans-serif; margin:0; padding:0; background:#f5f5f5;}
+    nav {background:#333; color:#fff; padding:15px; text-align:center; display:flex; justify-content:space-between; align-items:center;}
+    nav button {background:#2196F3; border:none; padding:8px 15px; color:#fff; border-radius:5px; cursor:pointer;}
+    nav button:hover {background:#1976D2;}
+    .chat-container {max-width: 700px; margin: 20px auto; background: #fff; border-radius: 10px; padding: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);}
+    .messages {height: 400px; overflow-y: auto; border: 1px solid #ddd; padding: 10px; border-radius: 5px; margin-bottom: 15px;}
+    .message {padding: 8px 12px; border-radius: 20px; margin: 5px 0; max-width: 70%;}
+    .sent {background: #4CAF50; color: white; margin-left: auto; text-align: right;}
+    .received {background: #ddd; color: #000; margin-right: auto; text-align: left;}
+    .input-box {display: flex; gap: 10px;}
+    .input-box input {flex: 1; padding: 10px; border: 1px solid #ccc; border-radius: 5px;}
+    .input-box button {padding: 10px 20px; border: none; border-radius: 5px; background: #2196F3; color: white; cursor: pointer;}
+    .input-box button:hover {background: #1976D2;}
+  </style>
+</head>
+<body>
+
+<nav>
+  <span id="chatTitle">Chat Room</span>
+  <button onclick="window.location.href='index.html'">Back to Dashboard</button>
+</nav>
+
+<div class="chat-container">
+  <div class="messages" id="messages"></div>
+  <div class="input-box">
+    <input type="text" id="messageInput" placeholder="Type a message...">
+    <button onclick="sendMessage()">Send</button>
+  </div>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore-compat.js"></script>
+
+<script>
+  const firebaseConfig = {
+   apiKey: "AIzaSyB3Pnr04DrjcBBsaHx3rr0RINktnQHs0oY",
+            authDomain: "kairos232005.firebaseapp.com",
+            projectId: "kairos232005",
+            storageBucket: "kairos232005.firebasestorage.app",
+            messagingSenderId: "750292953272",
+            appId: "1:750292953272:web:c6f7e85f64b6d52096ec4d"
+  };
+
+  firebase.initializeApp(firebaseConfig);
+  const db = firebase.firestore();
+
+  const urlParams = new URLSearchParams(window.location.search);
+  const chatKey = urlParams.get("chatKey");
+
+  if (!chatKey) {
+    alert("No chat key provided!");
+  }
+
+  document.getElementById("chatTitle").innerText = "Chat Room: " + chatKey;
+
+  const messagesDiv = document.getElementById("messages");
+  const currentUser = localStorage.getItem("currentUserName") || "Anonymous";
+
+  const chatRef = db.collection("chats").doc(chatKey).collection("messages");
+
+  chatRef.orderBy("timestamp").onSnapshot(snapshot => {
+    messagesDiv.innerHTML = "";
+    snapshot.forEach(doc => {
+      const data = doc.data();
+      const div = document.createElement("div");
+      div.classList.add("message");
+      div.classList.add(data.sender === currentUser ? "sent" : "received");
+      div.innerText = data.sender + ": " + data.text;
+      messagesDiv.appendChild(div);
+    });
+    messagesDiv.scrollTop = messagesDiv.scrollHeight;
+  });
+
+  async function sendMessage() {
+    const input = document.getElementById("messageInput");
+    const text = input.value.trim();
+    if (!text) return;
+
+    await chatRef.add({
+      sender: currentUser,
+      text,
+      timestamp: firebase.firestore.FieldValue.serverTimestamp()
+    });
+
+    input.value = "";
+  }
+</script>
+
+</body>
+</html>

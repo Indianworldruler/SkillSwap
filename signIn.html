@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Sign Up - Skill Exchange</title>
+  <style>
+    body {font-family: Arial, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; background: #f2f2f2;}
+    .container {background: #fff; padding: 30px; border-radius: 10px; box-shadow: 0 0 10px rgba(0,0,0,0.1); width: 350px;}
+    h2 {text-align: center; margin-bottom: 20px;}
+    input, button {width: 100%; margin: 10px 0; padding: 10px; border-radius: 5px; border: 1px solid #ccc;}
+    button {background: #4CAF50; color: #fff; border: none; cursor: pointer;}
+    button:hover {background: #45a049;}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>Sign Up</h2>
+    <input type="text" id="name" placeholder="Name" required>
+    <input type="email" id="email" placeholder="Email" required>
+    <input type="password" id="password" placeholder="Password" required>
+    <input type="text" id="skills" placeholder="Skills (comma separated)" required>
+    <input type="text" id="wantToLearn" placeholder="Want to Learn (comma separated)" required>
+    <button id="signUpBtn">Sign Up</button>
+  </div>
+
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-auth-compat.js"></script>
+
+  <script>
+    const firebaseConfig = {
+      apiKey: "AIzaSyB3Pnr04DrjcBBsaHx3rr0RINktnQHs0oY",
+            authDomain: "kairos232005.firebaseapp.com",
+            projectId: "kairos232005",
+            storageBucket: "kairos232005.firebasestorage.app",
+            messagingSenderId: "750292953272",
+            appId: "1:750292953272:web:c6f7e85f64b6d52096ec4d"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+    const auth = firebase.auth();
+
+    document.getElementById("signUpBtn").addEventListener("click", async () => {
+      const name = document.getElementById("name").value.trim();
+      const email = document.getElementById("email").value.trim();
+      const password = document.getElementById("password").value.trim();
+      const skills = document.getElementById("skills").value.split(',').map(s => s.trim()).filter(s=>s);
+      const wantToLearn = document.getElementById("wantToLearn").value.split(',').map(s => s.trim()).filter(s=>s);
+
+      if (!name || !email || !password) { alert("Please fill all fields!"); return; }
+
+      try {
+        const userCredential = await auth.createUserWithEmailAndPassword(email, password);
+        const userId = userCredential.user.uid;
+        const usersSnapshot = await db.collection("users").get();
+        const nextNumber = usersSnapshot.size + 1;
+        await db.collection("users").doc(userId).set({
+          name,
+          email,
+          skills,
+          wantToLearn,
+          userNumber: nextNumber,
+          requestsReceived: [],
+          requestsSent: [],
+          chats: []
+        });
+        alert("Sign Up successful! Please login.");
+        window.location.href = "login.html";
+      } catch (error) {
+        if (error.code === 'auth/email-already-in-use') {
+          try {
+            const signInCredential = await auth.signInWithEmailAndPassword(email, password);
+            const userId = signInCredential.user.uid;
+            const userDoc = await db.collection("users").doc(userId).get();
+            if (!userDoc.exists) {
+              const usersSnapshot = await db.collection("users").get();
+              const nextNumber = usersSnapshot.size + 1;
+              await db.collection("users").doc(userId).set({
+                name,
+                email,
+                skills,
+                wantToLearn,
+                userNumber: nextNumber,
+                requestsReceived: [],
+                requestsSent: [],
+                chats: []
+              });
+            }
+            alert("Existing account signed in and profile created. Please login.");
+            window.location.href = "login.html";
+          } catch (e) {
+            alert("Email already in use. If you already registered, go to Login or reset password.");
+          }
+        } else {
+          alert("Error: " + error.message);
+        }
+      }
+    });
+  </script>
+</body>
+</html>

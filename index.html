@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Dashboard - Skill Exchange</title>
+  <style>
+    body {font-family: Arial, sans-serif; margin:0; padding:0; background:#f5f5f5;}
+    nav {background:#333; color:#fff; padding:15px; text-align:center;}
+    nav span {margin-right:20px;}
+    nav button {margin-left:10px; padding:5px 10px; border:none; border-radius:5px; background:#2196F3; color:white; cursor:pointer;}
+    .container {width: 90%; max-width: 1200px; margin: 20px auto;}
+    h2 {text-align:center;}
+    .user-card, .other-card {background:#fff; padding:20px; border-radius:10px; margin:10px 0; box-shadow:0 2px 5px rgba(0,0,0,0.1);}
+    .user-card input {width: 100%; padding:8px; margin:5px 0; border-radius:5px; border:1px solid #ccc;}
+    .user-card button, .other-card button {padding:10px 20px; border:none; border-radius:5px; cursor:pointer; background:#4CAF50; color:#fff; margin-top:10px;}
+    .user-card button:hover, .other-card button:hover {background:#45a049;}
+    .other-users {display: flex; flex-wrap: wrap; gap:20px;}
+    .other-card {flex: 1 1 calc(33% - 20px);}
+    .sticky-bar {position: fixed; bottom: 0; left: 0; width: 100%; background:#ffeb3b; padding:15px; text-align:center; display:none; box-shadow:0 -2px 5px rgba(0,0,0,0.2);}
+    .sticky-bar button {margin: 0 10px;}
+  </style>
+</head>
+<body>
+
+<nav id="navbar">
+  <span>Welcome to Skill Exchange Dashboard</span>
+  
+</nav>
+
+<div class="container">
+  <h2>My Profile</h2>
+  <div class="user-card" id="myCard">
+    <input type="text" id="myName" placeholder="Name">
+    <input type="email" id="myEmail" placeholder="Email" disabled>
+    <input type="text" id="mySkills" placeholder="Skills (comma separated)">
+    <input type="text" id="myWantToLearn" placeholder="Want to Learn (comma separated)">
+    <button id="updateProfile">Update Profile</button>
+  </div>
+
+  <h2>Other Users</h2>
+  <div class="other-users" id="otherUsers"></div>
+</div>
+
+<div class="sticky-bar" id="requestBar">
+  <span id="requestText"></span>
+  <button id="acceptBtn">Accept</button>
+  <button id="rejectBtn">Reject</button>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-auth-compat.js"></script>
+
+<script>
+  const firebaseConfig = {
+    apiKey: "AIzaSyB3Pnr04DrjcBBsaHx3rr0RINktnQHs0oY",
+            authDomain: "kairos232005.firebaseapp.com",
+            projectId: "kairos232005",
+            storageBucket: "kairos232005.firebasestorage.app",
+            messagingSenderId: "750292953272",
+            appId: "1:750292953272:web:c6f7e85f64b6d52096ec4d"
+  };
+
+  firebase.initializeApp(firebaseConfig);
+  const db = firebase.firestore();
+  const auth = firebase.auth();
+
+  let currentUser = null;
+  
+  auth.onAuthStateChanged(async (user) => {
+  if (!user) {
+    // if not logged in, always go back to login
+    window.location.href = "login.html";
+    return;
+  }
+
+  // store uid for later use
+  localStorage.setItem("currentUserId", user.uid);
+
+  // load profile by Firebase UID instead of userNumber
+  const userDoc = await db.collection("users").doc(user.uid).get();
+  if (!userDoc.exists) return;
+
+  currentUser = { id: userDoc.id, ...userDoc.data() };
+
+  document.getElementById("myName").value = currentUser.name || "";
+  document.getElementById("myEmail").value = currentUser.email || "";
+  document.getElementById("mySkills").value = (currentUser.skills || []).join(", ");
+  document.getElementById("myWantToLearn").value = (currentUser.wantToLearn || []).join(", ");
+
+  localStorage.setItem("currentUserName", currentUser.name || "");
+  showActiveChats();
+  await loadOtherUsers();
+});
+
+  document.getElementById("updateProfile").addEventListener("click", async () => {
+    const name = document.getElementById("myName").value.trim();
+    const skills = document.getElementById("mySkills").value.split(",").map(s => s.trim()).filter(s => s);
+    const wantToLearn = document.getElementById("myWantToLearn").value.split(",").map(s => s.trim()).filter(s => s);
+
+    await db.collection("users").doc(currentUser.id).update({ name, skills, wantToLearn });
+    alert("Profile updated!");
+    await loadMyProfile();
+    await loadOtherUsers();
+  });
+
+  async function loadOtherUsers() {
+    const usersSnapshot = await db.collection("users").where("userNumber", "!=", currentUserNumber).get();
+    const container = document.getElementById("otherUsers");
+    container.innerHTML = "";
+
+    usersSnapshot.forEach(doc => {
+      const data = doc.data();
+      const card = document.createElement("div");
+      card.className = "other-card";
+      card.innerHTML = `
+        <h3>${data.name}</h3>
+        <p><strong>Skills:</strong> ${(data.skills || []).join(", ")}</p>
+        <p><strong>Want to Learn:</strong> ${(data.wantToLearn || []).join(", ")}</p>
+        <button onclick="sendRequest('${doc.id}', '${data.name}')">Send Request</button>
+      `;
+      container.appendChild(card);
+    });
+  }
+
+  async function sendRequest(userId, userName) {
+    const userRef = db.collection("users").doc(userId);
+    await userRef.update({
+      requestsReceived: firebase.firestore.FieldValue.arrayUnion(localStorage.getItem("currentUserName") || "")
+    });
+
+    await db.collection("users").doc(currentUser.id).update({
+      requestsSent: firebase.firestore.FieldValue.arrayUnion(userName)
+    });
+
+    alert("Request sent to " + userName);
+  }
+
+  async function checkRequests() {
+    const doc = await db.collection("users").doc(currentUser.id).get();
+    const data = doc.data();
+    if (data.requestsReceived && data.requestsReceived.length > 0) {
+      const requester = data.requestsReceived[0];
+      const bar = document.getElementById("requestBar");
+      document.getElementById("requestText").innerText = `Connection request from ${requester}`;
+      bar.style.display = "block";
+
+      document.getElementById("acceptBtn").onclick = async () => {
+        const chatKey = "chat_" + currentUser.id + "_" + requester.replace(/\s+/g, "");
+        const chatDoc = await db.collection("chats").doc(chatKey).get();
+        if (!chatDoc.exists) {
+          await db.collection("chats").doc(chatKey).set({
+            users: [currentUser.name, requester],
+            messages: []
+          });
+        }
+
+        await db.collection("users").doc(currentUser.id).update({
+          requestsReceived: firebase.firestore.FieldValue.arrayRemove(requester),
+          chats: firebase.firestore.FieldValue.arrayUnion({ chatKey, partner: requester })
+        });
+
+        const partnerDoc = await db.collection("users").where("name", "==", requester).get();
+        if (!partnerDoc.empty) {
+          await db.collection("users").doc(partnerDoc.docs[0].id).update({
+            chats: firebase.firestore.FieldValue.arrayUnion({ chatKey, partner: currentUser.name })
+          });
+        }
+
+        bar.style.display = "none";
+        alert("Request accepted from " + requester);
+        await loadMyProfile();
+        await loadOtherUsers();
+      };
+
+      document.getElementById("rejectBtn").onclick = async () => {
+        await db.collection("users").doc(currentUser.id).update({
+          requestsReceived: firebase.firestore.FieldValue.arrayRemove(requester)
+        });
+        bar.style.display = "none";
+      };
+    }
+  }
+
+  function showActiveChats() {
+    const navbar = document.getElementById("navbar");
+    navbar.innerHTML = `<span>Welcome, ${currentUser.name || "User"}</span>`;
+    if (currentUser.chats && currentUser.chats.length > 0) {
+      currentUser.chats.forEach(chat => {
+        const btn = document.createElement("button");
+        btn.innerText = `Chat with ${chat.partner}`;
+        btn.onclick = () => window.location.href = `chat.html?chatKey=${chat.chatKey}`;
+        navbar.appendChild(btn);
+      });
+    }
+  }
+
+  setInterval(checkRequests, 3000);
+
+  loadMyProfile().then(loadOtherUsers);
+</script>
+
+</body>
+</html>
