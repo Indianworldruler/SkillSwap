@@ -25,7 +25,6 @@
 
 <nav id="navbar">
   <span>Welcome to Skill Exchange Dashboard</span>
-  
 </nav>
 
 <div class="container">
@@ -55,132 +54,107 @@
 <script>
   const firebaseConfig = {
     apiKey: "AIzaSyB3Pnr04DrjcBBsaHx3rr0RINktnQHs0oY",
-            authDomain: "kairos232005.firebaseapp.com",
-            projectId: "kairos232005",
-            storageBucket: "kairos232005.firebasestorage.app",
-            messagingSenderId: "750292953272",
-            appId: "1:750292953272:web:c6f7e85f64b6d52096ec4d"
+    authDomain: "kairos232005.firebaseapp.com",
+    projectId: "kairos232005",
+    storageBucket: "kairos232005.firebasestorage.app",
+    messagingSenderId: "750292953272",
+    appId: "1:750292953272:web:c6f7e85f64b6d52096ec4d"
   };
 
   firebase.initializeApp(firebaseConfig);
   const db = firebase.firestore();
   const auth = firebase.auth();
 
-  let currentUserNumber = parseInt(localStorage.getItem("currentUserNumber"));
-  
-  auth.onAuthStateChanged(async (user) => {
-  if (!user) {
-    // if not logged in, always go back to login
-    window.location.href = "login.html";
-    return;
+  let currentUser = null;
+
+  // Load current user profile
+  async function loadMyProfile() {
+    if (!currentUser) return;
+    document.getElementById("myName").value = currentUser.name || "";
+    document.getElementById("myEmail").value = currentUser.email || "";
+    document.getElementById("mySkills").value = (currentUser.skills || []).join(", ");
+    document.getElementById("myWantToLearn").value = (currentUser.wantToLearn || []).join(", ");
+    localStorage.setItem("currentUserName", currentUser.name || "");
+    showActiveChats();
   }
 
-  // store uid for later use
-  localStorage.setItem("currentUserId", user.uid);
-
-  // load profile by Firebase UID instead of userNumber
-  const userDoc = await db.collection("users").doc(user.uid).get();
-  if (!userDoc.exists) return;
-
-  currentUser = { id: userDoc.id, ...userDoc.data() };
-
-  document.getElementById("myName").value = currentUser.name || "";
-  document.getElementById("myEmail").value = currentUser.email || "";
-  document.getElementById("mySkills").value = (currentUser.skills || []).join(", ");
-  document.getElementById("myWantToLearn").value = (currentUser.wantToLearn || []).join(", ");
-
-  localStorage.setItem("currentUserName", currentUser.name || "");
-  showActiveChats();
-  await loadOtherUsers();
-});
-
-  document.getElementById("updateProfile").addEventListener("click", async () => {
-    const name = document.getElementById("myName").value.trim();
-    const skills = document.getElementById("mySkills").value.split(",").map(s => s.trim()).filter(s => s);
-    const wantToLearn = document.getElementById("myWantToLearn").value.split(",").map(s => s.trim()).filter(s => s);
-
-    await db.collection("users").doc(currentUser.id).update({ name, skills, wantToLearn });
-    alert("Profile updated!");
-    await loadMyProfile();
-    await loadOtherUsers();
-  });
-
+  // Load other users
   async function loadOtherUsers() {
-  const usersSnapshot = await db.collection("users").get(); // fetch all users
-  const container = document.getElementById("otherUsers");
-  container.innerHTML = "";
+    const usersSnapshot = await db.collection("users").get();
+    const container = document.getElementById("otherUsers");
+    container.innerHTML = "";
 
-  usersSnapshot.forEach(doc => {
-    if (doc.id === currentUser.id) return; // skip yourself
-
-    const data = doc.data();
-    const card = document.createElement("div");
-    card.className = "other-card";
-    card.innerHTML = `
-      <h3>${data.name}</h3>
-      <p><strong>Skills:</strong> ${(data.skills || []).join(", ")}</p>
-      <p><strong>Want to Learn:</strong> ${(data.wantToLearn || []).join(", ")}</p>
-      <button onclick="sendRequest('${doc.id}', '${data.name}')">Send Request</button>
-    `;
-    container.appendChild(card);
-  });
-}
-
-
-
-  async function sendRequest(userId, userName) {
-    const userRef = db.collection("users").doc(userId);
-    await userRef.update({
-      requestsReceived: firebase.firestore.FieldValue.arrayUnion(localStorage.getItem("currentUserName") || "")
+    usersSnapshot.forEach(doc => {
+      if (doc.id === currentUser.id) return; // skip self
+      const data = doc.data();
+      const card = document.createElement("div");
+      card.className = "other-card";
+      card.innerHTML = `
+        <h3>${data.name}</h3>
+        <p><strong>Skills:</strong> ${(data.skills || []).join(", ")}</p>
+        <p><strong>Want to Learn:</strong> ${(data.wantToLearn || []).join(", ")}</p>
+        <button onclick="sendRequest('${doc.id}', '${currentUser.id}')">Send Request</button>
+      `;
+      container.appendChild(card);
     });
-
-    await db.collection("users").doc(currentUser.id).update({
-      requestsSent: firebase.firestore.FieldValue.arrayUnion(userName)
-    });
-
-    alert("Request sent to " + userName);
   }
 
+  // Send connection request
+  async function sendRequest(targetId, senderId) {
+    const targetRef = db.collection("users").doc(targetId);
+    const senderRef = db.collection("users").doc(senderId);
+
+    // store UID instead of name to avoid conflicts
+    await targetRef.update({
+      requestsReceived: firebase.firestore.FieldValue.arrayUnion(senderId)
+    });
+    await senderRef.update({
+      requestsSent: firebase.firestore.FieldValue.arrayUnion(targetId)
+    });
+    alert("Request sent!");
+  }
+
+  // Check incoming requests
   async function checkRequests() {
+    if (!currentUser) return;
     const doc = await db.collection("users").doc(currentUser.id).get();
     const data = doc.data();
     if (data.requestsReceived && data.requestsReceived.length > 0) {
-      const requester = data.requestsReceived[0];
+      const requesterId = data.requestsReceived[0];
+      const requesterDoc = await db.collection("users").doc(requesterId).get();
+      const requesterName = requesterDoc.data().name || "User";
       const bar = document.getElementById("requestBar");
-      document.getElementById("requestText").innerText = `Connection request from ${requester}`;
+      document.getElementById("requestText").innerText = `Connection request from ${requesterName}`;
       bar.style.display = "block";
 
       document.getElementById("acceptBtn").onclick = async () => {
-        const chatKey = "chat_" + currentUser.id + "_" + requester.replace(/\s+/g, "");
+        const chatKey = "chat_" + currentUser.id + "_" + requesterId;
         const chatDoc = await db.collection("chats").doc(chatKey).get();
         if (!chatDoc.exists) {
           await db.collection("chats").doc(chatKey).set({
-            users: [currentUser.name, requester],
+            users: [currentUser.id, requesterId],
             messages: []
           });
         }
 
+        // Update chats for both users
         await db.collection("users").doc(currentUser.id).update({
-          requestsReceived: firebase.firestore.FieldValue.arrayRemove(requester),
-          chats: firebase.firestore.FieldValue.arrayUnion({ chatKey, partner: requester })
+          requestsReceived: firebase.firestore.FieldValue.arrayRemove(requesterId),
+          chats: firebase.firestore.FieldValue.arrayUnion({ chatKey, partnerId: requesterId })
+        });
+        await db.collection("users").doc(requesterId).update({
+          chats: firebase.firestore.FieldValue.arrayUnion({ chatKey, partnerId: currentUser.id })
         });
 
-        const partnerDoc = await db.collection("users").where("name", "==", requester).get();
-        if (!partnerDoc.empty) {
-          await db.collection("users").doc(partnerDoc.docs[0].id).update({
-            chats: firebase.firestore.FieldValue.arrayUnion({ chatKey, partner: currentUser.name })
-          });
-        }
-
         bar.style.display = "none";
-        alert("Request accepted from " + requester);
-        await loadMyProfile();
+        alert("Request accepted!");
+        await refreshCurrentUser();
         await loadOtherUsers();
       };
 
       document.getElementById("rejectBtn").onclick = async () => {
         await db.collection("users").doc(currentUser.id).update({
-          requestsReceived: firebase.firestore.FieldValue.arrayRemove(requester)
+          requestsReceived: firebase.firestore.FieldValue.arrayRemove(requesterId)
         });
         bar.style.display = "none";
       };
@@ -193,17 +167,47 @@
     if (currentUser.chats && currentUser.chats.length > 0) {
       currentUser.chats.forEach(chat => {
         const btn = document.createElement("button");
-        btn.innerText = `Chat with ${chat.partner}`;
+        btn.innerText = `Chat with ${chat.partnerId}`;
         btn.onclick = () => window.location.href = `chat.html?chatKey=${chat.chatKey}`;
         navbar.appendChild(btn);
       });
     }
   }
 
+  // Refresh current user document from Firestore
+  async function refreshCurrentUser() {
+    const userDoc = await db.collection("users").doc(currentUser.id).get();
+    currentUser = { id: userDoc.id, ...userDoc.data() };
+    await loadMyProfile();
+  }
+
+  // Update profile
+  document.getElementById("updateProfile").addEventListener("click", async () => {
+    const name = document.getElementById("myName").value.trim();
+    const skills = document.getElementById("mySkills").value.split(",").map(s => s.trim()).filter(s => s);
+    const wantToLearn = document.getElementById("myWantToLearn").value.split(",").map(s => s.trim()).filter(s => s);
+    await db.collection("users").doc(currentUser.id).update({ name, skills, wantToLearn });
+    alert("Profile updated!");
+    await refreshCurrentUser();
+    await loadOtherUsers();
+  });
+
+  // Auth state listener
+  auth.onAuthStateChanged(async (user) => {
+    if (!user) {
+      window.location.href = "login.html";
+      return;
+    }
+    const userDoc = await db.collection("users").doc(user.uid).get();
+    if (!userDoc.exists) return;
+    currentUser = { id: userDoc.id, ...userDoc.data() };
+    await loadMyProfile();
+    await loadOtherUsers();
+  });
+
+  // Poll requests every 3 seconds
   setInterval(checkRequests, 3000);
 
-  
 </script>
-
 </body>
 </html>
