@@ -52,172 +52,298 @@
 <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-auth-compat.js"></script>
 
 <script>
-  const firebaseConfig = {
-    apiKey: "AIzaSyB3Pnr04DrjcBBsaHx3rr0RINktnQHs0oY",
-    authDomain: "kairos232005.firebaseapp.com",
-    projectId: "kairos232005",
-    storageBucket: "kairos232005.firebasestorage.app",
-    messagingSenderId: "750292953272",
-    appId: "1:750292953272:web:c6f7e85f64b6d52096ec4d"
-  };
+/*
+  FIXED index.html
+  - Uses UIDs (document IDs) everywhere for DB operations (no names used as doc IDs)
+  - Guards against missing documents (.exists checks)
+  - Attaches only one users onSnapshot listener (prevents duplicates)
+  - Redirects to login if auth missing or user document deleted
+  - Defensive try/catch to avoid uncaught promise errors
+*/
 
-  firebase.initializeApp(firebaseConfig);
-  const db = firebase.firestore();
-  const auth = firebase.auth();
+const firebaseConfig = {
+  apiKey: "AIzaSyB3Pnr04DrjcBBsaHx3rr0RINktnQHs0oY",
+  authDomain: "kairos232005.firebaseapp.com",
+  projectId: "kairos232005",
+  storageBucket: "kairos232005.appspot.com", // corrected to .appspot.com
+  messagingSenderId: "750292953272",
+  appId: "1:750292953272:web:c6f7e85f64b6d52096ec4d"
+};
 
-  let currentUser = null;
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+const auth = firebase.auth();
 
-  // Load current user profile
-  async function loadMyProfile() {
-    if (!currentUser) return;
-    document.getElementById("myName").value = currentUser.name || "";
-    document.getElementById("myEmail").value = currentUser.email || "";
-    document.getElementById("mySkills").value = (currentUser.skills || []).join(", ");
-    document.getElementById("myWantToLearn").value = (currentUser.wantToLearn || []).join(", ");
-    localStorage.setItem("currentUserName", currentUser.name || "");
-    showActiveChats();
+let currentUser = null;
+let usersUnsubscribe = null; // will hold the onSnapshot unsubscribe fn
+
+/* --- Helper: safe access to fields --- */
+function safeArray(arr) {
+  return Array.isArray(arr) ? arr : [];
+}
+
+/* --- Load my profile into UI --- */
+async function loadMyProfile() {
+  if (!currentUser) return;
+  document.getElementById("myName").value = currentUser.name || "";
+  document.getElementById("myEmail").value = currentUser.email || "";
+  document.getElementById("mySkills").value = (currentUser.skills || []).join(", ");
+  document.getElementById("myWantToLearn").value = (currentUser.wantToLearn || []).join(", ");
+  localStorage.setItem("currentUserName", currentUser.name || "");
+  await showActiveChats();
+}
+
+/* --- Real-time load other users (one listener only) --- */
+function loadOtherUsers() {
+  // detach previous listener if present (prevents double-listening)
+  if (typeof usersUnsubscribe === "function") {
+    usersUnsubscribe();
+    usersUnsubscribe = null;
   }
 
-  // Load other users
-  function loadOtherUsers() {
   const container = document.getElementById("otherUsers");
-  db.collection("users").onSnapshot(snapshot => {
+  usersUnsubscribe = db.collection("users").onSnapshot(snapshot => {
     container.innerHTML = "";
     snapshot.forEach(doc => {
+      // Wait until currentUser is set; skip otherwise
+      if (!currentUser) return;
       if (doc.id === currentUser.id) return; // skip self
-      const data = doc.data();
+
+      const data = doc.data() || {};
       const card = document.createElement("div");
       card.className = "other-card";
-      card.innerHTML = `
-        <h3>${data.name}</h3>
-        <p><strong>Skills:</strong> ${(data.skills || []).join(", ")}</p>
-        <p><strong>Want to Learn:</strong> ${(data.wantToLearn || []).join(", ")}</p>
-        <button onclick="sendRequest('${doc.id}', '${currentUser.id}')">Send Request</button>
 
+      const skills = (data.skills || []).join(", ");
+      const want = (data.wantToLearn || []).join(", ");
+
+      // Use only the target user's UID in the onclick; sender is currentUser.id
+      card.innerHTML = `
+        <h3>${data.name || "Unnamed"}</h3>
+        <p><strong>Skills:</strong> ${skills}</p>
+        <p><strong>Want to Learn:</strong> ${want}</p>
+        <button onclick="sendRequest('${doc.id}')">Send Request</button>
       `;
       container.appendChild(card);
     });
+  }, err => {
+    console.error("users onSnapshot error:", err);
   });
 }
 
+/* --- Send connection request: store UIDs, not names --- */
+async function sendRequest(targetId) {
+  try {
+    if (!currentUser || !currentUser.id) throw new Error("Not authenticated");
+    const senderId = currentUser.id;
+    if (targetId === senderId) { alert("Cannot send request to yourself."); return; }
 
-  // Send connection request
-  async function sendRequest(targetId, senderId) {
-  const targetRef = db.collection("users").doc(targetId);
-  const senderRef = db.collection("users").doc(senderId);
+    const targetRef = db.collection("users").doc(targetId);
+    const senderRef = db.collection("users").doc(senderId);
 
-  await targetRef.update({
-    requestsReceived: firebase.firestore.FieldValue.arrayUnion(senderId)
-  });
-  await senderRef.update({
-    requestsSent: firebase.firestore.FieldValue.arrayUnion(targetId)
-  });
-  alert("Request sent!");
+    // Ensure target exists
+    const targetDoc = await targetRef.get();
+    if (!targetDoc.exists) { alert("Target user not found."); return; }
+
+    // Add sender UID to target's requestsReceived; add target UID to sender's requestsSent
+    await targetRef.update({
+      requestsReceived: firebase.firestore.FieldValue.arrayUnion(senderId)
+    });
+    await senderRef.update({
+      requestsSent: firebase.firestore.FieldValue.arrayUnion(targetId)
+    });
+
+    alert("Request sent!");
+  } catch (err) {
+    console.error("sendRequest error:", err);
+    alert("Failed to send request: " + (err.message || err));
+  }
 }
 
+/* --- Check incoming requests (first pending request shown) --- */
+async function checkRequests() {
+  try {
+    if (!currentUser || !currentUser.id) return;
+    const userDocSnap = await db.collection("users").doc(currentUser.id).get();
+    if (!userDocSnap.exists) {
+      // If our user doc was deleted externally, sign out and redirect
+      await auth.signOut();
+      window.location.href = "login.html";
+      return;
+    }
+    const data = userDocSnap.data() || {};
+    const requests = safeArray(data.requestsReceived);
+    if (requests.length === 0) {
+      // hide bar
+      document.getElementById("requestBar").style.display = "none";
+      return;
+    }
 
-  // Check incoming requests
-  async function checkRequests() {
-    if (!currentUser) return;
-    const doc = await db.collection("users").doc(currentUser.id).get();
-    const data = doc.data();
-    if (data.requestsReceived && data.requestsReceived.length > 0) {
-      const requesterId = data.requestsReceived[0];
-      const requesterDoc = await db.collection("users").doc(requesterId).get();
-      const requesterName = requesterDoc.data().name || "User";
-      const bar = document.getElementById("requestBar");
-      document.getElementById("requestText").innerText = `Connection request from ${requesterName}`;
-      bar.style.display = "block";
+    // show first pending request (you can extend to show multiple)
+    const requesterId = requests[0];
+    if (!requesterId) return;
 
-      document.getElementById("acceptBtn").onclick = async () => {
+    const requesterDocSnap = await db.collection("users").doc(requesterId).get();
+    if (!requesterDocSnap.exists) {
+      // requester was deleted or invalid ID -> remove it from array
+      await db.collection("users").doc(currentUser.id).update({
+        requestsReceived: firebase.firestore.FieldValue.arrayRemove(requesterId)
+      });
+      return;
+    }
+
+    const requesterData = requesterDocSnap.data() || {};
+    const requesterName = requesterData.name || "User";
+
+    const bar = document.getElementById("requestBar");
+    document.getElementById("requestText").innerText = `Connection request from ${requesterName}`;
+    bar.style.display = "block";
+
+    // wire accept/reject (use closures so each click references correct requesterId)
+    document.getElementById("acceptBtn").onclick = async () => {
+      try {
         const chatKey = "chat_" + currentUser.id + "_" + requesterId;
-        const chatDoc = await db.collection("chats").doc(chatKey).get();
-        if (!chatDoc.exists) {
-          await db.collection("chats").doc(chatKey).set({
+
+        // create chat document if missing
+        const chatDocRef = db.collection("chats").doc(chatKey);
+        const chatSnap = await chatDocRef.get();
+        if (!chatSnap.exists) {
+          await chatDocRef.set({
             users: [currentUser.id, requesterId],
             messages: []
           });
         }
 
-        // Update chats for both users
+        // update both users' chats arrays and remove request
         await db.collection("users").doc(currentUser.id).update({
           requestsReceived: firebase.firestore.FieldValue.arrayRemove(requesterId),
           chats: firebase.firestore.FieldValue.arrayUnion({ chatKey, partnerId: requesterId })
         });
+
         await db.collection("users").doc(requesterId).update({
-          chats: firebase.firestore.FieldValue.arrayUnion({ chatKey, partnerId: currentUser.id })
+          chats: firebase.firestore.FieldValue.arrayUnion({ chatKey, partnerId: currentUser.id }),
+          // also ensure the requester doesn't keep an old pending request if present
+          requestsSent: firebase.firestore.FieldValue.arrayRemove(currentUser.id)
         });
 
         bar.style.display = "none";
         alert("Request accepted!");
-        await refreshCurrentUser();
-        await loadOtherUsers();
-      };
+        await refreshCurrentUser(); // refresh local data
+      } catch (err) {
+        console.error("acceptBtn error:", err);
+        alert("Failed to accept request.");
+      }
+    };
 
-      document.getElementById("rejectBtn").onclick = async () => {
+    document.getElementById("rejectBtn").onclick = async () => {
+      try {
         await db.collection("users").doc(currentUser.id).update({
           requestsReceived: firebase.firestore.FieldValue.arrayRemove(requesterId)
         });
         bar.style.display = "none";
-      };
-    }
+      } catch (err) {
+        console.error("rejectBtn error:", err);
+        alert("Failed to reject request.");
+      }
+    };
+
+  } catch (err) {
+    console.error("checkRequests error:", err);
   }
+}
 
-  async function showActiveChats() {
+/* --- Show active chats in navbar (dedupe & show partner name) --- */
+async function showActiveChats() {
   const navbar = document.getElementById("navbar");
-  navbar.innerHTML = `<span>Welcome, ${currentUser.name || "User"}</span>`;
+  navbar.innerHTML = `<span>Welcome, ${currentUser?.name || "User"}</span>`;
 
-  if (currentUser.chats && currentUser.chats.length > 0) {
-    for (const chat of currentUser.chats) {
-      // Only proceed if chatKey and partnerId exist
-      if (!chat.chatKey || !chat.partnerId) continue;
+  const chats = safeArray(currentUser?.chats);
+  if (chats.length === 0) return;
 
-      const partnerDoc = await db.collection("users").doc(chat.partnerId).get();
-      if (!partnerDoc.exists) continue; // skip if partner does not exist
+  const seen = new Set();
+  for (const chat of chats) {
+    if (!chat || !chat.chatKey || !chat.partnerId) continue;
+    if (seen.has(chat.chatKey)) continue;
+    seen.add(chat.chatKey);
 
-      const partnerName = partnerDoc.data().name || "Unknown";
+    try {
+      const partnerSnap = await db.collection("users").doc(chat.partnerId).get();
+      if (!partnerSnap.exists) continue;
+      const partnerName = partnerSnap.data().name || "Unknown";
       const btn = document.createElement("button");
       btn.innerText = `Chat with ${partnerName}`;
       btn.onclick = () => window.location.href = `chat.html?chatKey=${chat.chatKey}`;
       navbar.appendChild(btn);
+    } catch (err) {
+      console.warn("showActiveChats: failed to fetch partner", err);
+      continue;
     }
   }
 }
 
-
-  // Refresh current user document from Firestore
-  async function refreshCurrentUser() {
-    const userDoc = await db.collection("users").doc(currentUser.id).get();
-    currentUser = { id: userDoc.id, ...userDoc.data() };
-    await loadMyProfile();
+/* --- Refresh currentUser from Firestore (and sign out/redirect if doc missing) --- */
+async function refreshCurrentUser() {
+  if (!currentUser || !currentUser.id) return;
+  const userDocSnap = await db.collection("users").doc(currentUser.id).get();
+  if (!userDocSnap.exists) {
+    // user doc deleted externally => sign out and redirect
+    await auth.signOut();
+    window.location.href = "login.html";
+    return;
   }
+  currentUser = { id: userDocSnap.id, ...userDocSnap.data() };
+  await loadMyProfile();
+}
 
-  // Update profile
-  document.getElementById("updateProfile").addEventListener("click", async () => {
+/* --- Update profile button handler --- */
+document.getElementById("updateProfile").addEventListener("click", async () => {
+  try {
+    if (!currentUser || !currentUser.id) throw new Error("Not authenticated");
     const name = document.getElementById("myName").value.trim();
-    const skills = document.getElementById("mySkills").value.split(",").map(s => s.trim()).filter(s => s);
-    const wantToLearn = document.getElementById("myWantToLearn").value.split(",").map(s => s.trim()).filter(s => s);
+    const skills = document.getElementById("mySkills").value.split(",").map(s => s.trim()).filter(Boolean);
+    const wantToLearn = document.getElementById("myWantToLearn").value.split(",").map(s => s.trim()).filter(Boolean);
     await db.collection("users").doc(currentUser.id).update({ name, skills, wantToLearn });
     alert("Profile updated!");
     await refreshCurrentUser();
-    await loadOtherUsers();
-  });
+    // loadOtherUsers uses onSnapshot so it will update automatically
+  } catch (err) {
+    console.error("updateProfile error:", err);
+    alert("Failed to update profile.");
+  }
+});
 
-  // Auth state listener
-  auth.onAuthStateChanged(async (user) => {
+/* --- Auth state listener: load user doc or redirect if missing --- */
+auth.onAuthStateChanged(async (user) => {
+  try {
     if (!user) {
       window.location.href = "login.html";
       return;
     }
-    const userDoc = await db.collection("users").doc(user.uid).get();
-    if (!userDoc.exists) return;
-    currentUser = { id: userDoc.id, ...userDoc.data() };
-    await loadMyProfile();
-    await loadOtherUsers();
-  });
 
-  // Poll requests every 3 seconds
-  setInterval(checkRequests, 3000);
+    const userDocSnap = await db.collection("users").doc(user.uid).get();
+    if (!userDocSnap.exists) {
+      // user auth exists but profile doc missing -> sign out & redirect
+      await auth.signOut();
+      window.location.href = "login.html";
+      return;
+    }
+
+    currentUser = { id: userDocSnap.id, ...userDocSnap.data() };
+
+    // Populate UI and start listeners
+    await loadMyProfile();
+    loadOtherUsers(); // attaches onSnapshot once (we detach any previous inside)
+    // Run initial checkRequests immediately
+    checkRequests();
+  } catch (err) {
+    console.error("onAuthStateChanged error:", err);
+  }
+});
+
+/* --- Poll incoming requests every 3 seconds (safe, but not heavy) --- */
+setInterval(() => {
+  // fire-and-forget with safety
+  checkRequests().catch(e => console.error("checkRequests interval error:", e));
+}, 3000);
 
 </script>
 </body>
