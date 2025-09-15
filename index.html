@@ -92,7 +92,8 @@
         <h3>${data.name}</h3>
         <p><strong>Skills:</strong> ${(data.skills || []).join(", ")}</p>
         <p><strong>Want to Learn:</strong> ${(data.wantToLearn || []).join(", ")}</p>
-        <button onclick="sendRequest('${doc.id}', '${data.name}')">Send Request</button>
+        <button onclick="sendRequest('${doc.id}', '${currentUser.id}')">Send Request</button>
+
       `;
       container.appendChild(card);
     });
@@ -102,18 +103,18 @@
 
   // Send connection request
   async function sendRequest(targetId, senderId) {
-    const targetRef = db.collection("users").doc(targetId);
-    const senderRef = db.collection("users").doc(senderId);
+  const targetRef = db.collection("users").doc(targetId);
+  const senderRef = db.collection("users").doc(senderId);
 
-    // store UID instead of name to avoid conflicts
-    await targetRef.update({
-      requestsReceived: firebase.firestore.FieldValue.arrayUnion(senderId)
-    });
-    await senderRef.update({
-      requestsSent: firebase.firestore.FieldValue.arrayUnion(targetId)
-    });
-    alert("Request sent!");
-  }
+  await targetRef.update({
+    requestsReceived: firebase.firestore.FieldValue.arrayUnion(senderId)
+  });
+  await senderRef.update({
+    requestsSent: firebase.firestore.FieldValue.arrayUnion(targetId)
+  });
+  alert("Request sent!");
+}
+
 
   // Check incoming requests
   async function checkRequests() {
