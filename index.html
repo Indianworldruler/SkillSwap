@@ -201,6 +201,20 @@ async function refreshCurrentUser() {
   currentUser = { id: userDocSnap.id, ...userDocSnap.data() };
   await loadMyProfile();
 }
+ /* New changes */
+  let userUnsubscribe = null;
+
+function listenToCurrentUser() {
+  if (!currentUser?.id) return;
+  if (typeof userUnsubscribe === "function") userUnsubscribe();
+  userUnsubscribe = db.collection("users").doc(currentUser.id)
+    .onSnapshot(docSnap => {
+      if (!docSnap.exists) return;
+      currentUser = { id: docSnap.id, ...docSnap.data() };
+      loadMyProfile(); // keeps profile + chat buttons updated
+    }, err => console.error("listenToCurrentUser error:", err));
+}
+
 
 /* --- Update profile --- */
 document.getElementById("updateProfile").addEventListener("click", async () => {
@@ -225,6 +239,8 @@ auth.onAuthStateChanged(async (user) => {
     await loadMyProfile();
     loadOtherUsers();
     checkRequests();
+    listenToCurrentUser(); // 🔥 start real-time sync
+
   } catch (err) { console.error("onAuthStateChanged error:", err); }
 });
 
