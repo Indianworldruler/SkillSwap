@@ -254,10 +254,9 @@ async function checkRequests() {
 /* --- Show active chats in navbar (dedupe & show partner name) --- */
 async function showActiveChats() {
   const navbar = document.getElementById("navbar");
-  // Preserve the welcome text but remove old chat buttons
   navbar.innerHTML = `<span>Welcome, ${currentUser?.name || "User"}</span>`;
 
-  const chats = Array.isArray(currentUser?.chats) ? currentUser.chats : [];
+  const chats = safeArray(currentUser?.chats);
   if (chats.length === 0) return;
 
   const seen = new Set();
@@ -270,15 +269,9 @@ async function showActiveChats() {
       const partnerSnap = await db.collection("users").doc(chat.partnerId).get();
       if (!partnerSnap.exists) continue;
       const partnerName = partnerSnap.data().name || "Unknown";
-
       const btn = document.createElement("button");
       btn.innerText = `Chat with ${partnerName}`;
-      // Use click event listener instead of inline onclick
-      btn.addEventListener("click", (e) => {
-        e.preventDefault(); // prevent page reload
-        window.location.href = `chat.html?chatKey=${chat.chatKey}`;
-      });
-
+      btn.onclick = () => window.location.href = `chat.html?chatKey=${chat.chatKey}`;
       navbar.appendChild(btn);
     } catch (err) {
       console.warn("showActiveChats: failed to fetch partner", err);
@@ -326,22 +319,15 @@ auth.onAuthStateChanged(async (user) => {
       return;
     }
 
-    db.collection("users").doc(user.uid).onSnapshot(async (doc) => {
-      if (!doc.exists) {
-        await auth.signOut();
-        window.location.href = "login.html";
-        return;
-      }
+    const userDocSnap = await db.collection("users").doc(user.uid).get();
+    if (!userDocSnap.exists) {
+      // user auth exists but profile doc missing -> sign out & redirect
+      await auth.signOut();
+      window.location.href = "login.html";
+      return;
+    }
 
-      currentUser = { id: doc.id, ...doc.data() };
-      await loadMyProfile();
-      loadOtherUsers();
-    });
-  } catch (error) {
-    console.error("Auth state error:", error);
-    window.location.href = "login.html";
-  }
-});
+    currentUser = { id: userDocSnap.id, ...userDocSnap.data() };
 
     // Populate UI and start listeners
     await loadMyProfile();
