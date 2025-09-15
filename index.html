@@ -52,20 +52,11 @@
 <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-auth-compat.js"></script>
 
 <script>
-/*
-  FIXED index.html
-  - Uses UIDs (document IDs) everywhere for DB operations (no names used as doc IDs)
-  - Guards against missing documents (.exists checks)
-  - Attaches only one users onSnapshot listener (prevents duplicates)
-  - Redirects to login if auth missing or user document deleted
-  - Defensive try/catch to avoid uncaught promise errors
-*/
-
 const firebaseConfig = {
   apiKey: "AIzaSyB3Pnr04DrjcBBsaHx3rr0RINktnQHs0oY",
   authDomain: "kairos232005.firebaseapp.com",
   projectId: "kairos232005",
-  storageBucket: "kairos232005.appspot.com", // corrected to .appspot.com
+  storageBucket: "kairos232005.appspot.com",
   messagingSenderId: "750292953272",
   appId: "1:750292953272:web:c6f7e85f64b6d52096ec4d"
 };
@@ -75,14 +66,14 @@ const db = firebase.firestore();
 const auth = firebase.auth();
 
 let currentUser = null;
-let usersUnsubscribe = null; // will hold the onSnapshot unsubscribe fn
+let usersUnsubscribe = null;
 
-/* --- Helper: safe access to fields --- */
+// helper to safely get arrays
 function safeArray(arr) {
   return Array.isArray(arr) ? arr : [];
 }
 
-/* --- Load my profile into UI --- */
+/* --- Load my profile --- */
 async function loadMyProfile() {
   if (!currentUser) return;
   document.getElementById("myName").value = currentUser.name || "";
@@ -93,30 +84,20 @@ async function loadMyProfile() {
   await showActiveChats();
 }
 
-/* --- Real-time load other users (one listener only) --- */
+/* --- Load other users --- */
 function loadOtherUsers() {
-  // detach previous listener if present (prevents double-listening)
-  if (typeof usersUnsubscribe === "function") {
-    usersUnsubscribe();
-    usersUnsubscribe = null;
-  }
-
+  if (typeof usersUnsubscribe === "function") usersUnsubscribe();
   const container = document.getElementById("otherUsers");
   usersUnsubscribe = db.collection("users").onSnapshot(snapshot => {
     container.innerHTML = "";
     snapshot.forEach(doc => {
-      // Wait until currentUser is set; skip otherwise
       if (!currentUser) return;
-      if (doc.id === currentUser.id) return; // skip self
-
+      if (doc.id === currentUser.id) return;
       const data = doc.data() || {};
       const card = document.createElement("div");
       card.className = "other-card";
-
       const skills = (data.skills || []).join(", ");
       const want = (data.wantToLearn || []).join(", ");
-
-      // Use only the target user's UID in the onclick; sender is currentUser.id
       card.innerHTML = `
         <h3>${data.name || "Unnamed"}</h3>
         <p><strong>Skills:</strong> ${skills}</p>
@@ -125,146 +106,81 @@ function loadOtherUsers() {
       `;
       container.appendChild(card);
     });
-  }, err => {
-    console.error("users onSnapshot error:", err);
-  });
+  }, err => console.error("users onSnapshot error:", err));
 }
 
-/* --- Send connection request: store UIDs, not names --- */
+/* --- Send connection request --- */
 async function sendRequest(targetId) {
   try {
     if (!currentUser || !currentUser.id) throw new Error("Not authenticated");
-    const senderId = currentUser.id;
-    if (targetId === senderId) { alert("Cannot send request to yourself."); return; }
-
+    if (targetId === currentUser.id) { alert("Cannot send request to yourself."); return; }
     const targetRef = db.collection("users").doc(targetId);
-    const senderRef = db.collection("users").doc(senderId);
-
-    // Ensure target exists
     const targetDoc = await targetRef.get();
     if (!targetDoc.exists) { alert("Target user not found."); return; }
-
-    // Add sender UID to target's requestsReceived; add target UID to sender's requestsSent
-    await targetRef.update({
-      requestsReceived: firebase.firestore.FieldValue.arrayUnion(senderId)
-    });
-    await senderRef.update({
-      requestsSent: firebase.firestore.FieldValue.arrayUnion(targetId)
-    });
-
+    await targetRef.update({ requestsReceived: firebase.firestore.FieldValue.arrayUnion(currentUser.id) });
+    await db.collection("users").doc(currentUser.id).update({ requestsSent: firebase.firestore.FieldValue.arrayUnion(targetId) });
     alert("Request sent!");
-  } catch (err) {
-    console.error("sendRequest error:", err);
-    alert("Failed to send request: " + (err.message || err));
-  }
+  } catch (err) { console.error("sendRequest error:", err); alert("Failed to send request."); }
 }
 
-/* --- Check incoming requests (first pending request shown) --- */
+/* --- Check incoming requests --- */
 async function checkRequests() {
   try {
     if (!currentUser || !currentUser.id) return;
     const userDocSnap = await db.collection("users").doc(currentUser.id).get();
-    if (!userDocSnap.exists) {
-      // If our user doc was deleted externally, sign out and redirect
-      await auth.signOut();
-      window.location.href = "login.html";
-      return;
-    }
+    if (!userDocSnap.exists) { await auth.signOut(); window.location.href = "login.html"; return; }
     const data = userDocSnap.data() || {};
     const requests = safeArray(data.requestsReceived);
-    if (requests.length === 0) {
-      // hide bar
-      document.getElementById("requestBar").style.display = "none";
-      return;
-    }
-
-    // show first pending request (you can extend to show multiple)
+    const bar = document.getElementById("requestBar");
+    if (requests.length === 0) { bar.style.display = "none"; return; }
     const requesterId = requests[0];
     if (!requesterId) return;
-
     const requesterDocSnap = await db.collection("users").doc(requesterId).get();
     if (!requesterDocSnap.exists) {
-      // requester was deleted or invalid ID -> remove it from array
-      await db.collection("users").doc(currentUser.id).update({
-        requestsReceived: firebase.firestore.FieldValue.arrayRemove(requesterId)
-      });
+      await db.collection("users").doc(currentUser.id).update({ requestsReceived: firebase.firestore.FieldValue.arrayRemove(requesterId) });
       return;
     }
-
-    const requesterData = requesterDocSnap.data() || {};
-    const requesterName = requesterData.name || "User";
-
-    const bar = document.getElementById("requestBar");
+    const requesterName = requesterDocSnap.data().name || "User";
     document.getElementById("requestText").innerText = `Connection request from ${requesterName}`;
     bar.style.display = "block";
 
-    // wire accept/reject (use closures so each click references correct requesterId)
     document.getElementById("acceptBtn").onclick = async () => {
       try {
         const chatKey = "chat_" + currentUser.id + "_" + requesterId;
-
-        // create chat document if missing
-        const chatDocRef = db.collection("chats").doc(chatKey);
-        const chatSnap = await chatDocRef.get();
-        if (!chatSnap.exists) {
-          await chatDocRef.set({
-            users: [currentUser.id, requesterId],
-            messages: []
-          });
-        }
-
-        // update both users' chats arrays and remove request
+        const chatRef = db.collection("chats").doc(chatKey);
+        const chatSnap = await chatRef.get();
+        if (!chatSnap.exists) await chatRef.set({ users: [currentUser.id, requesterId], messages: [] });
         await db.collection("users").doc(currentUser.id).update({
           requestsReceived: firebase.firestore.FieldValue.arrayRemove(requesterId),
           chats: firebase.firestore.FieldValue.arrayUnion({ chatKey, partnerId: requesterId })
         });
-
         await db.collection("users").doc(requesterId).update({
           chats: firebase.firestore.FieldValue.arrayUnion({ chatKey, partnerId: currentUser.id }),
-          // also ensure the requester doesn't keep an old pending request if present
           requestsSent: firebase.firestore.FieldValue.arrayRemove(currentUser.id)
         });
-
         bar.style.display = "none";
         alert("Request accepted!");
-        await refreshCurrentUser(); // refresh local data
-      } catch (err) {
-        console.error("acceptBtn error:", err);
-        alert("Failed to accept request.");
-      }
+        await refreshCurrentUser();
+      } catch (err) { console.error("acceptBtn error:", err); alert("Failed to accept request."); }
     };
 
     document.getElementById("rejectBtn").onclick = async () => {
-      try {
-        await db.collection("users").doc(currentUser.id).update({
-          requestsReceived: firebase.firestore.FieldValue.arrayRemove(requesterId)
-        });
-        bar.style.display = "none";
-      } catch (err) {
-        console.error("rejectBtn error:", err);
-        alert("Failed to reject request.");
-      }
+      try { await db.collection("users").doc(currentUser.id).update({ requestsReceived: firebase.firestore.FieldValue.arrayRemove(requesterId) }); bar.style.display = "none"; }
+      catch (err) { console.error("rejectBtn error:", err); alert("Failed to reject request."); }
     };
-
-  } catch (err) {
-    console.error("checkRequests error:", err);
-  }
+  } catch (err) { console.error("checkRequests error:", err); }
 }
 
-/* --- Show active chats in navbar (dedupe & show partner name) --- */
+/* --- Show active chats --- */
 async function showActiveChats() {
   const navbar = document.getElementById("navbar");
   navbar.innerHTML = `<span>Welcome, ${currentUser?.name || "User"}</span>`;
-
   const chats = safeArray(currentUser?.chats);
-  if (chats.length === 0) return;
-
   const seen = new Set();
   for (const chat of chats) {
     if (!chat || !chat.chatKey || !chat.partnerId) continue;
     if (seen.has(chat.chatKey)) continue;
     seen.add(chat.chatKey);
-
     try {
       const partnerSnap = await db.collection("users").doc(chat.partnerId).get();
       if (!partnerSnap.exists) continue;
@@ -273,28 +189,20 @@ async function showActiveChats() {
       btn.innerText = `Chat with ${partnerName}`;
       btn.onclick = () => window.location.href = `chat.html?chatKey=${chat.chatKey}`;
       navbar.appendChild(btn);
-    } catch (err) {
-      console.warn("showActiveChats: failed to fetch partner", err);
-      continue;
-    }
+    } catch (err) { console.warn("showActiveChats: failed to fetch partner", err); }
   }
 }
 
-/* --- Refresh currentUser from Firestore (and sign out/redirect if doc missing) --- */
+/* --- Refresh current user --- */
 async function refreshCurrentUser() {
   if (!currentUser || !currentUser.id) return;
   const userDocSnap = await db.collection("users").doc(currentUser.id).get();
-  if (!userDocSnap.exists) {
-    // user doc deleted externally => sign out and redirect
-    await auth.signOut();
-    window.location.href = "login.html";
-    return;
-  }
+  if (!userDocSnap.exists) { await auth.signOut(); window.location.href = "login.html"; return; }
   currentUser = { id: userDocSnap.id, ...userDocSnap.data() };
   await loadMyProfile();
 }
 
-/* --- Update profile button handler --- */
+/* --- Update profile --- */
 document.getElementById("updateProfile").addEventListener("click", async () => {
   try {
     if (!currentUser || !currentUser.id) throw new Error("Not authenticated");
@@ -304,47 +212,24 @@ document.getElementById("updateProfile").addEventListener("click", async () => {
     await db.collection("users").doc(currentUser.id).update({ name, skills, wantToLearn });
     alert("Profile updated!");
     await refreshCurrentUser();
-    // loadOtherUsers uses onSnapshot so it will update automatically
-  } catch (err) {
-    console.error("updateProfile error:", err);
-    alert("Failed to update profile.");
-  }
+  } catch (err) { console.error("updateProfile error:", err); alert("Failed to update profile."); }
 });
 
-/* --- Auth state listener: load user doc or redirect if missing --- */
+/* --- Auth state --- */
 auth.onAuthStateChanged(async (user) => {
   try {
-    if (!user) {
-      window.location.href = "login.html";
-      return;
-    }
-
+    if (!user) { window.location.href = "login.html"; return; }
     const userDocSnap = await db.collection("users").doc(user.uid).get();
-    if (!userDocSnap.exists) {
-      // user auth exists but profile doc missing -> sign out & redirect
-      await auth.signOut();
-      window.location.href = "login.html";
-      return;
-    }
-
+    if (!userDocSnap.exists) { await auth.signOut(); window.location.href = "login.html"; return; }
     currentUser = { id: userDocSnap.id, ...userDocSnap.data() };
-
-    // Populate UI and start listeners
     await loadMyProfile();
-    loadOtherUsers(); // attaches onSnapshot once (we detach any previous inside)
-    // Run initial checkRequests immediately
+    loadOtherUsers();
     checkRequests();
-  } catch (err) {
-    console.error("onAuthStateChanged error:", err);
-  }
+  } catch (err) { console.error("onAuthStateChanged error:", err); }
 });
 
-/* --- Poll incoming requests every 3 seconds (safe, but not heavy) --- */
-setInterval(() => {
-  // fire-and-forget with safety
-  checkRequests().catch(e => console.error("checkRequests interval error:", e));
-}, 3000);
-
+/* --- Poll incoming requests every 3s --- */
+setInterval(() => { checkRequests().catch(e => console.error("checkRequests interval error:", e)); }, 3000);
 </script>
 </body>
 </html>
