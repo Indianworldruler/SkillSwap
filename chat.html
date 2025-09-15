@@ -3,48 +3,32 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Dashboard - Skill Exchange</title>
+  <title>Chat - Skill Exchange</title>
   <style>
-    body {font-family: Arial, sans-serif; margin:0; padding:0; background:#f5f5f5;}
+    body {font-family: Arial, sans-serif; margin:0; padding:0; background:#f5f5f5; display:flex; flex-direction:column; height:100vh;}
     nav {background:#333; color:#fff; padding:15px; text-align:center;}
-    nav span {margin-right:20px;}
-    nav button {margin-left:10px; padding:5px 10px; border:none; border-radius:5px; background:#2196F3; color:white; cursor:pointer;}
-    .container {width: 90%; max-width: 1200px; margin: 20px auto;}
-    h2 {text-align:center;}
-    .user-card, .other-card {background:#fff; padding:20px; border-radius:10px; margin:10px 0; box-shadow:0 2px 5px rgba(0,0,0,0.1);}
-    .user-card input {width: 100%; padding:8px; margin:5px 0; border-radius:5px; border:1px solid #ccc;}
-    .user-card button, .other-card button {padding:10px 20px; border:none; border-radius:5px; cursor:pointer; background:#4CAF50; color:#fff; margin-top:10px;}
-    .user-card button:hover, .other-card button:hover {background:#45a049;}
-    .other-users {display: flex; flex-wrap: wrap; gap:20px;}
-    .other-card {flex: 1 1 calc(33% - 20px);}
-    .sticky-bar {position: fixed; bottom: 0; left: 0; width: 100%; background:#ffeb3b; padding:15px; text-align:center; display:none; box-shadow:0 -2px 5px rgba(0,0,0,0.2);}
-    .sticky-bar button {margin: 0 10px;}
+    nav button {margin-left:20px; padding:5px 10px; border:none; border-radius:5px; background:#2196F3; color:white; cursor:pointer;}
+    .chat-container {flex:1; padding:20px; overflow-y:auto; background:#fff;}
+    .message {margin:10px 0; padding:10px; border-radius:10px; max-width:70%;}
+    .me {background:#DCF8C6; align-self:flex-end;}
+    .other {background:#f1f0f0; align-self:flex-start;}
+    .input-bar {display:flex; padding:10px; background:#eee;}
+    .input-bar input {flex:1; padding:10px; border:1px solid #ccc; border-radius:5px;}
+    .input-bar button {margin-left:10px; padding:10px 20px; border:none; border-radius:5px; cursor:pointer; background:#4CAF50; color:#fff;}
   </style>
 </head>
 <body>
 
-<nav id="navbar">
-  <span>Welcome to Skill Exchange Dashboard</span>
+<nav>
+  <span>Chat Room</span>
+  <button onclick="window.location.href='index.html'">Back to Dashboard</button>
 </nav>
 
-<div class="container">
-  <h2>My Profile</h2>
-  <div class="user-card" id="myCard">
-    <input type="text" id="myName" placeholder="Name">
-    <input type="email" id="myEmail" placeholder="Email" disabled>
-    <input type="text" id="mySkills" placeholder="Skills (comma separated)">
-    <input type="text" id="myWantToLearn" placeholder="Want to Learn (comma separated)">
-    <button id="updateProfile">Update Profile</button>
-  </div>
+<div class="chat-container" id="chatContainer"></div>
 
-  <h2>Other Users</h2>
-  <div class="other-users" id="otherUsers"></div>
-</div>
-
-<div class="sticky-bar" id="requestBar">
-  <span id="requestText"></span>
-  <button id="acceptBtn">Accept</button>
-  <button id="rejectBtn">Reject</button>
+<div class="input-bar">
+  <input type="text" id="messageInput" placeholder="Type a message...">
+  <button onclick="sendMessage()">Send</button>
 </div>
 
 <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
@@ -56,7 +40,7 @@
     apiKey: "AIzaSyB3Pnr04DrjcBBsaHx3rr0RINktnQHs0oY",
     authDomain: "kairos232005.firebaseapp.com",
     projectId: "kairos232005",
-    storageBucket: "kairos232005.firebasestorage.app",
+    storageBucket: "kairos232005.appspot.com",
     messagingSenderId: "750292953272",
     appId: "1:750292953272:web:c6f7e85f64b6d52096ec4d"
   };
@@ -66,146 +50,50 @@
   const auth = firebase.auth();
 
   let currentUser = null;
-
-  // Load current user profile
-  async function loadMyProfile() {
-    if (!currentUser) return;
-    document.getElementById("myName").value = currentUser.name || "";
-    document.getElementById("myEmail").value = currentUser.email || "";
-    document.getElementById("mySkills").value = (currentUser.skills || []).join(", ");
-    document.getElementById("myWantToLearn").value = (currentUser.wantToLearn || []).join(", ");
-    localStorage.setItem("currentUserName", currentUser.name || "");
-    showActiveChats();
+  const params = new URLSearchParams(window.location.search);
+  const chatKey = params.get("chatKey");
+  if (!chatKey) {
+    alert("No chat key provided!");
+    window.location.href = "index.html";
   }
 
-  // Load other users
-  function loadOtherUsers() {
-    const container = document.getElementById("otherUsers");
-    db.collection("users").onSnapshot(snapshot => {
-      container.innerHTML = "";
-      snapshot.forEach(doc => {
-        if (!currentUser || doc.id === currentUser.id) return; // skip self
-        const data = doc.data();
-        const card = document.createElement("div");
-        card.className = "other-card";
-        card.innerHTML = `
-          <h3>${data.name}</h3>
-          <p><strong>Skills:</strong> ${(data.skills || []).join(", ")}</p>
-          <p><strong>Want to Learn:</strong> ${(data.wantToLearn || []).join(", ")}</p>
-          <button onclick="sendRequest('${doc.id}', '${currentUser.id}')">Send Request</button>
-        `;
-        container.appendChild(card);
+  // Realtime listener for messages
+  function loadMessages() {
+    db.collection("chats").doc(chatKey).collection("messages")
+      .orderBy("timestamp")
+      .onSnapshot(snapshot => {
+        const chatContainer = document.getElementById("chatContainer");
+        chatContainer.innerHTML = "";
+        snapshot.forEach(doc => {
+          const msg = doc.data();
+          const div = document.createElement("div");
+          div.classList.add("message");
+          if (msg.senderId === currentUser.id) {
+            div.classList.add("me");
+          } else {
+            div.classList.add("other");
+          }
+          div.textContent = msg.text;
+          chatContainer.appendChild(div);
+        });
+        chatContainer.scrollTop = chatContainer.scrollHeight;
       });
+  }
+
+  // Send message
+  async function sendMessage() {
+    const input = document.getElementById("messageInput");
+    const text = input.value.trim();
+    if (!text) return;
+    await db.collection("chats").doc(chatKey).collection("messages").add({
+      senderId: currentUser.id,
+      text,
+      timestamp: firebase.firestore.FieldValue.serverTimestamp()
     });
+    input.value = "";
   }
 
-  // Send connection request
-  async function sendRequest(targetId, senderId) {
-    const targetRef = db.collection("users").doc(targetId);
-    const senderRef = db.collection("users").doc(senderId);
-
-    await targetRef.update({
-      requestsReceived: firebase.firestore.FieldValue.arrayUnion(senderId)
-    });
-    await senderRef.update({
-      requestsSent: firebase.firestore.FieldValue.arrayUnion(targetId)
-    });
-    alert("Request sent!");
-  }
-
-  // Check incoming requests
-  async function checkRequests() {
-    if (!currentUser) return;
-    const doc = await db.collection("users").doc(currentUser.id).get();
-    const data = doc.data();
-    if (data.requestsReceived && data.requestsReceived.length > 0) {
-      const requesterId = data.requestsReceived[0];
-      const requesterDoc = await db.collection("users").doc(requesterId).get();
-      const requesterName = requesterDoc.data().name || "User";
-      const bar = document.getElementById("requestBar");
-      document.getElementById("requestText").innerText = `Connection request from ${requesterName}`;
-      bar.style.display = "block";
-
-      document.getElementById("acceptBtn").onclick = async () => {
-        const chatKey = "chat_" + currentUser.id + "_" + requesterId;
-        const chatDoc = await db.collection("chats").doc(chatKey).get();
-        if (!chatDoc.exists) {
-          await db.collection("chats").doc(chatKey).set({
-            users: [currentUser.id, requesterId],
-            messages: []
-          });
-        }
-
-        await db.collection("users").doc(currentUser.id).update({
-          requestsReceived: firebase.firestore.FieldValue.arrayRemove(requesterId),
-          chats: firebase.firestore.FieldValue.arrayUnion({ chatKey, partnerId: requesterId })
-        });
-        await db.collection("users").doc(requesterId).update({
-          chats: firebase.firestore.FieldValue.arrayUnion({ chatKey, partnerId: currentUser.id })
-        });
-
-        bar.style.display = "none";
-        alert("Request accepted!");
-        await refreshCurrentUser();
-        loadOtherUsers();
-      };
-
-      document.getElementById("rejectBtn").onclick = async () => {
-        await db.collection("users").doc(currentUser.id).update({
-          requestsReceived: firebase.firestore.FieldValue.arrayRemove(requesterId)
-        });
-        bar.style.display = "none";
-      };
-    }
-  }
-
-  async function showActiveChats() {
-    const navbar = document.getElementById("navbar");
-    navbar.innerHTML = `<span>Welcome, ${currentUser.name || "User"}</span>`;
-
-    if (currentUser.chats && currentUser.chats.length > 0) {
-      const seen = new Set();
-      for (const chat of currentUser.chats) {
-        if (!chat.chatKey || !chat.partnerId) continue;
-        if (seen.has(chat.chatKey)) continue;
-        seen.add(chat.chatKey);
-
-        const partnerDoc = await db.collection("users").doc(chat.partnerId).get();
-        if (!partnerDoc.exists) continue;
-
-        const partnerName = partnerDoc.data().name || "Unknown";
-        const btn = document.createElement("button");
-        btn.innerText = `Chat with ${partnerName}`;
-        btn.onclick = () => window.location.href = `chat.html?chatKey=${chat.chatKey}`;
-        navbar.appendChild(btn);
-      }
-    }
-  }
-
-  // Refresh current user document
-  async function refreshCurrentUser() {
-    const userDoc = await db.collection("users").doc(currentUser.id).get();
-    if (!userDoc.exists) {
-      await auth.signOut();
-      window.location.href = "login.html";
-      return;
-    }
-    currentUser = { id: userDoc.id, ...userDoc.data() };
-    await loadMyProfile();
-  }
-
-  // Update profile
-  document.getElementById("updateProfile").addEventListener("click", async () => {
-    const name = document.getElementById("myName").value.trim();
-    const skills = document.getElementById("mySkills").value.split(",").map(s => s.trim()).filter(s => s);
-    const wantToLearn = document.getElementById("myWantToLearn").value.split(",").map(s => s.trim()).filter(s => s);
-    await db.collection("users").doc(currentUser.id).update({ name, skills, wantToLearn });
-    alert("Profile updated!");
-    await refreshCurrentUser();
-    loadOtherUsers();
-  });
-
-  // Auth state listener
+  // Auth check
   auth.onAuthStateChanged(async (user) => {
     if (!user) {
       window.location.href = "login.html";
@@ -218,11 +106,8 @@
       return;
     }
     currentUser = { id: userDoc.id, ...userDoc.data() };
-    await refreshCurrentUser();
-    loadOtherUsers();
+    loadMessages();
   });
-
-  setInterval(checkRequests, 3000);
 </script>
 </body>
 </html>
